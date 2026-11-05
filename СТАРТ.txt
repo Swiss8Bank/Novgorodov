@@ -1,0 +1,23 @@
+﻿ЛОВИ ✦ — готовые файлы Telegram-бота
+
+1. Установите Docker Desktop (Windows/macOS) или Docker Engine с Compose v2 (Linux).
+2. Распакуйте архив и откройте терминал в папке lovi-bot.
+3. Скопируйте .env.example в .env:
+   Linux/macOS: cp .env.example .env
+   Windows PowerShell: Copy-Item .env.example .env
+4. В текстовом редакторе откройте .env и заполните BOT_TOKEN токеном от @BotFather.
+   Не отправляйте токен в чаты и не публикуйте файл .env.
+5. Если нужен прокси, заполните TELEGRAM_PROXY и/или MEDIA_PROXY в .env.
+6. Запустите: docker compose up -d --build
+7. Откройте бота в Telegram и нажмите /start.
+
+Посмотреть логи: docker compose logs -f bot worker
+Остановить: docker compose down
+
+Подробнее: README.md. Обычный Telegram Bot API ограничивает файл 50 MB;
+бот оставляет запас и отправляет до 49 MB. Подключение собственного Bot API
+для больших файлов описано в README.md.
+
+Архив содержит исходники, настройки, тесты и lockfile зависимостей.
+Токен, рабочие прокси и cookies необходимо предоставить самостоятельно.
+Живые проверки Telegram и площадок без этих настроек не выполнялись.

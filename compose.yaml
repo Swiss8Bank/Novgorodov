@@ -1,0 +1,69 @@
+name: lovi
+x-app: &app
+  image: lovi-bot:local
+  build: .
+  env_file: .env
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: [redis-server, --appendonly, "yes", --maxmemory, 256mb, --maxmemory-policy, noeviction]
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  bot:
+    <<: *app
+    command: [python, -m, lovi, bot]
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: [CMD, python, -m, lovi, health, gateway]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: [python, -m, lovi, worker]
+    stop_grace_period: 45s
+    volumes:
+      - downloads:/data
+      - ./secrets:/run/lovi-secrets:ro
+    healthcheck:
+      test: [CMD, python, -m, lovi, health]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis-data:
+  downloads:
