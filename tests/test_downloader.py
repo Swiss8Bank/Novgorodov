@@ -116,7 +116,15 @@ async def test_upstream_error_code_survives(settings, tmp_path, monkeypatch):
             "-c",
             script,
             str(tmp_path / "result.json"),
-            json.dumps({"ok": False, "code": "unavailable", "reason": "empty_media_response"}),
+            json.dumps(
+                {
+                    "ok": False,
+                    "code": "unavailable",
+                    "reason": "empty_media_response",
+                    "stage": "media",
+                    "media_host": "video.example.com",
+                }
+            ),
             **kwargs,
         )
 
@@ -124,3 +132,5 @@ async def test_upstream_error_code_survives(settings, tmp_path, monkeypatch):
     with pytest.raises(MediaError, match="unavailable") as caught:
         await Downloader(settings).probe("https://youtu.be/dQw4w9WgXcQ", tmp_path)
     assert caught.value.reason == "empty_media_response"
+    assert caught.value.stage == "media"
+    assert caught.value.media_host == "video.example.com"

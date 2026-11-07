@@ -45,11 +45,28 @@ def main() -> None:
     elif command == "health":
         sys.exit(0 if asyncio.run(health(gateway="gateway" in sys.argv[2:])) else 1)
     elif command == "diagnose":
+        import argparse
+
         from lovi.diagnostics import diagnose, print_report
 
-        if len(sys.argv) != 3:
-            raise SystemExit("Использование: python -m lovi diagnose URL")
-        report = asyncio.run(diagnose(get_settings(), sys.argv[2]))
+        parser = argparse.ArgumentParser(prog="python -m lovi diagnose")
+        parser.add_argument("url")
+        modes = parser.add_mutually_exclusive_group()
+        modes.add_argument("--cdn", action="store_true")
+        modes.add_argument("--download", action="store_true")
+        parser.add_argument(
+            "--height", type=int, default=720, choices=[0, 240, 360, 480, 720, 1080, 1440, 2160]
+        )
+        args = parser.parse_args(sys.argv[2:])
+        report = asyncio.run(
+            diagnose(
+                get_settings(),
+                args.url,
+                check_cdn=args.cdn,
+                check_download=args.download,
+                height=args.height,
+            )
+        )
         print_report(report)
         sys.exit(0 if report["ok"] else 1)
     else:

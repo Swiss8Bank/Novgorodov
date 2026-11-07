@@ -41,6 +41,13 @@ def test_h264_preferred_at_equal_resolution():
     assert list(video_format(720)({"formats": [a, b]}))[0]["format_id"] == "h264"
 
 
+def test_ready_mp4_preferred_to_extra_network_stream():
+    progressive = fmt("ready", 1280, 720, audio=True)
+    adaptive = fmt("adaptive", 1280, 720)
+    audio = {"format_id": "a", "ext": "m4a", "vcodec": "none", "acodec": "aac"}
+    assert list(video_format(720)({"formats": [progressive, adaptive, audio]})) == [progressive]
+
+
 def test_dont_invent_quality_buttons():
     info = summarize(
         {

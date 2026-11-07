@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     download_fragments: int = Field(4, ge=1, le=16)
     job_timeout_seconds: int = Field(600, ge=60, le=3600)
     probe_timeout_seconds: int = Field(60, ge=5, le=180)
+    media_socket_timeout_seconds: int = Field(20, ge=5, le=120)
     max_jobs_per_user_hour: int = Field(20, ge=1, le=1000)
     link_cooldown_seconds: int = Field(4, ge=1, le=60)
     session_ttl_seconds: int = Field(1800, ge=60)

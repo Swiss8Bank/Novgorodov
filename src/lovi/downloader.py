@@ -35,18 +35,26 @@ class Downloader:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def run(self, url: str, directory: Path, selection: Selection | None = None) -> dict:
+    async def run(
+        self,
+        url: str,
+        directory: Path,
+        selection: Selection | None = None,
+        *,
+        cdn_probe: bool = False,
+    ) -> dict:
         s = self.settings
         if shutil.disk_usage(directory).free < s.max_upload_bytes * 3 + 100_000_000:
             raise MediaError("disk")
         request = {
             "url": url,
-            "action": "download" if selection else "probe",
+            "action": "cdn_probe" if cdn_probe else "download" if selection else "probe",
             "selection": selection.model_dump() if selection else None,
             "max_bytes": s.max_upload_bytes,
             "max_duration": s.max_duration_seconds,
             "fragments": s.download_fragments,
             "js_runtime": s.js_runtime,
+            "socket_timeout": s.media_socket_timeout_seconds,
             "proxy": s.media_proxy.get_secret_value() if s.media_proxy else None,
             "cookies_file": None,
         }
@@ -64,6 +72,10 @@ class Downloader:
             if selection
             else s.probe_timeout_seconds
         )
+        if cdn_probe:
+            timeout = min(
+                timeout, s.probe_timeout_seconds + s.media_socket_timeout_seconds * 2 + 10
+            )
         with (directory / "process.log").open("wb") as log:
             process = await asyncio.create_subprocess_exec(
                 sys.executable,
@@ -85,7 +97,7 @@ class Downloader:
                             if total > s.max_upload_bytes * 4 + 10_000_000:
                                 raise MediaError("too_large") from None
             except TimeoutError as exc:
-                raise MediaError("timeout") from exc
+                raise MediaError("timeout", "job_deadline") from exc
             finally:
                 # Kill the entire process group, including FFmpeg, on cancellation or deadline.
                 try:
@@ -98,7 +110,12 @@ class Downloader:
             raise MediaError("internal")
         result = json.loads(result_path.read_text())
         if not result.get("ok"):
-            raise MediaError(result.get("code", "internal"), result.get("reason", "unspecified"))
+            raise MediaError(
+                result.get("code", "internal"),
+                result.get("reason", "unspecified"),
+                result.get("stage", "unspecified"),
+                result.get("media_host"),
+            )
         return result["data"]
 
     async def probe(self, url: str, directory: Path) -> MediaInfo:

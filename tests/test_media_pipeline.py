@@ -162,3 +162,22 @@ def test_actual_file_still_cannot_exceed_duration_limit(local_media, kind):
         )
     assert caught.value.code == "duration"
     assert caught.value.reason == "duration_limit"
+
+
+def test_actual_bounded_media_connection_sample(local_media):
+    result = extractor.extract(
+        {
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "action": "cdn_probe",
+            "selection": {"kind": "video", "height": 240},
+            "max_bytes": 10_000_000,
+            "max_duration": 60,
+            "fragments": 2,
+            "js_runtime": "node",
+        },
+        local_media,
+    )
+    assert result["info"]["heights"] == [240]
+    assert len(result["cdn_checks"]) == 1
+    assert 0 < result["cdn_checks"][0]["sample_bytes"] <= 1024
+    assert not list(local_media.glob("media*"))

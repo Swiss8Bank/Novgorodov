@@ -2,12 +2,16 @@
 
 import json
 import math
+import re
 import resource
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from yt_dlp import YoutubeDL
+from yt_dlp.networking import Request
+from yt_dlp.networking.impersonate import ImpersonateTarget
 from yt_dlp.utils import DownloadError
 
 from lovi.models import Artifact, MediaInfo, Selection
@@ -22,11 +26,23 @@ def resolution_of(fmt: dict) -> int:
 
 
 class MediaError(Exception):
-    def __init__(self, code: str, reason: str = "unspecified"):
+    def __init__(
+        self,
+        code: str,
+        reason: str = "unspecified",
+        stage: str = "unspecified",
+        media_host: str | None = None,
+    ):
         super().__init__(code)
         self.code = code
         # Only fixed labels cross the subprocess boundary or enter logs.
         self.reason = reason if reason in REASONS else "unspecified"
+        self.stage = stage if stage in {"metadata", "media", "postprocess"} else "unspecified"
+        self.media_host = (
+            media_host
+            if isinstance(media_host, str) and re.fullmatch(r"[A-Za-z0-9.-]{1,253}", media_host)
+            else None
+        )
 
 
 REASONS = {
@@ -44,6 +60,8 @@ REASONS = {
     "missing_impersonation",
     "duration_limit",
     "file_duration_missing",
+    "job_deadline",
+    "media_not_video",
 }
 
 
@@ -57,7 +75,7 @@ def classify_error(exc: Exception) -> MediaError:
         return MediaError("proxy_auth", "proxy_407")
     if "certificate verify failed" in raw or "certificate_verify_failed" in raw:
         return MediaError("network", "tls_error")
-    if "timed out" in raw or "timeout" in raw:
+    if isinstance(exc, TimeoutError) or "timed out" in raw or "timeout" in raw:
         return MediaError("timeout", "network_timeout")
     if "429" in raw:
         return MediaError("rate_limit", "http_429")
@@ -186,11 +204,18 @@ def video_format(height: int):
                 and (height == 0 or 0 < resolution <= height)
             ):
                 candidates.append(
-                    (resolution, str(fmt.get("vcodec", "")).startswith(("avc", "h264")), index, fmt)
+                    (
+                        resolution,
+                        str(fmt.get("vcodec", "")).startswith(("avc", "h264")),
+                        fmt.get("acodec") != "none",
+                        index,
+                        fmt,
+                    )
                 )
         if not candidates:
             return
-        video = max(candidates, key=lambda item: item[:3])[3]
+        # At equal resolution/codec, prefer a ready video+audio MP4 to two streams.
+        video = max(candidates, key=lambda item: item[:4])[4]
         # Unknown acodec on a progressive MP4 (common on Reels) does not mean silence.
         if video.get("acodec") != "none":
             yield video
@@ -229,6 +254,7 @@ def options(request: dict, directory: Path) -> dict:
     limit = int(request["max_bytes"])
 
     def progress(state: dict) -> None:
+        request["_stage"] = "media"
         if state.get("downloaded_bytes", 0) > limit * 2:
             raise MediaError("too_large")
 
@@ -243,7 +269,7 @@ def options(request: dict, directory: Path) -> dict:
         "logger": QuietLogger(),
         "noplaylist": True,
         "cachedir": False,
-        "socket_timeout": 20,
+        "socket_timeout": request.get("socket_timeout", 20),
         "retries": 2,
         "fragment_retries": 2,
         "extractor_retries": 2,
@@ -257,12 +283,57 @@ def options(request: dict, directory: Path) -> dict:
         "js_runtimes": {request["js_runtime"]: {}},
         # Challenge scripts are supplied by the pinned yt-dlp-ejs dependency, not remote code.
         "remote_components": [],
+        "postprocessor_hooks": [lambda state: request.update(_stage="postprocess")],
     }
+    if urlsplit(request["url"]).hostname in {"www.instagram.com", "instagram.com"}:
+        # Extraction and actual CDN transfers must use the same browser-capable backend.
+        opts["impersonate"] = ImpersonateTarget()
     if request.get("proxy"):
         opts["proxy"] = request["proxy"]
     if request.get("cookies_file"):
         opts["cookiefile"] = request["cookies_file"]
     return opts
+
+
+def probe_media_connections(ydl, info: dict, selection: Selection) -> list[dict]:
+    selected = list(video_format(selection.height)({"formats": info.get("formats") or [info]}))
+    if not selected:
+        raise MediaError("format", stage="media")
+    streams = selected[0].get("requested_formats") or selected
+    checks = []
+    for stream in streams:
+        headers = {
+            **info.get("http_headers", {}),
+            **stream.get("http_headers", {}),
+            "Range": "bytes=0-1023",
+        }
+        # Signed URLs, cookies and headers remain local. Even if Range is ignored,
+        # only read 1 KiB and close the response; this is not a full-download test.
+        host = urlsplit(stream["url"]).hostname
+        try:
+            with ydl.urlopen(Request(stream["url"], headers=headers)) as response:
+                content_type = response.headers.get("Content-Type", "").lower()
+                if "text/html" in content_type or "application/json" in content_type:
+                    raise MediaError("site_access", "media_not_video", "media", host)
+                sample = response.read(1024)
+                if not sample:
+                    raise MediaError("unavailable", stage="media", media_host=host)
+                checks.append(
+                    {
+                        "host": urlsplit(response.url).hostname,
+                        "protocol": stream.get("protocol", "unknown"),
+                        "http_status": response.status,
+                        "sample_bytes": len(sample),
+                        "width": stream.get("width"),
+                        "height": stream.get("height"),
+                    }
+                )
+        except MediaError:
+            raise
+        except Exception as exc:
+            error = classify_error(exc)
+            raise MediaError(error.code, error.reason, "media", host) from None
+    return checks
 
 
 def inspect_media_file(path: Path, max_duration: int) -> tuple[float, dict]:
@@ -294,15 +365,25 @@ def inspect_media_file(path: Path, max_duration: int) -> tuple[float, dict]:
 
 
 def extract(request: dict, directory: Path) -> dict:
+    request["_stage"] = "metadata"
     url = normalize_url(request["url"])
     opts = options(request, directory)
-    if request["action"] == "probe":
+    if request["action"] in {"probe", "cdn_probe"}:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
-        if not info:
-            raise MediaError("unavailable")
-        check_info(info, request["max_duration"])
-        return summarize(info, url).model_dump()
+            if not info:
+                raise MediaError("unavailable")
+            check_info(info, request["max_duration"])
+            summary = summarize(info, url).model_dump()
+            if request["action"] == "cdn_probe":
+                request["_stage"] = "media"
+                return {
+                    "info": summary,
+                    "cdn_checks": probe_media_connections(
+                        ydl, info, Selection.model_validate(request["selection"])
+                    ),
+                }
+        return summary
 
     selection = Selection.model_validate(request["selection"])
     if selection.kind == "video":
@@ -335,10 +416,17 @@ def extract(request: dict, directory: Path) -> dict:
             }
         )
     with YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+        # Separate extraction from transfer so a timeout identifies the failing stage.
+        info = ydl.extract_info(url, download=False)
+        if not info:
+            raise MediaError("unavailable")
+        check_info(info, request["max_duration"])
+        request["_stage"] = "media"
+        info = ydl.process_ie_result(info, download=True)
     if not info:
         raise MediaError("unavailable")
     check_info(info, request["max_duration"])
+    request["_stage"] = "postprocess"
     suffix = {"video": ".mp4", "audio": ".mp3", "cover": ".jpg"}[selection.kind]
     candidates = list(directory.glob(f"media*{suffix}"))
     if not candidates:
@@ -403,12 +491,25 @@ def main() -> None:
     try:
         result = {"ok": True, "data": extract(request, directory)}
     except MediaError as exc:
-        result = {"ok": False, "code": exc.code, "reason": exc.reason}
+        result = {
+            "ok": False,
+            "code": exc.code,
+            "reason": exc.reason,
+            "stage": exc.stage if exc.stage != "unspecified" else request.get("_stage"),
+            "media_host": exc.media_host,
+        }
     except DownloadError as exc:
         error = classify_error(exc)
-        result = {"ok": False, "code": error.code, "reason": error.reason}
-    except Exception:
-        result = {"ok": False, "code": "internal"}
+        result = {
+            "ok": False,
+            "code": error.code,
+            "reason": error.reason,
+            "stage": request.get("_stage"),
+        }
+    except Exception as exc:
+        error = classify_error(exc)
+        code = "internal" if error.reason == "extractor_error" else error.code
+        result = {"ok": False, "code": code, "reason": error.reason, "stage": request.get("_stage")}
     (directory / "result.json").write_text(json.dumps(result))
 
 
