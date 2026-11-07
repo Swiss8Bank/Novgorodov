@@ -8,7 +8,7 @@ dependencies = [
   "aiogram[proxy]>=3.22,<4",
   "arq>=0.26.3,<0.27",
   "pydantic-settings>=2.11,<3",
-  "yt-dlp[default]>=2025.11.12,<2028",
+  "yt-dlp[default,curl-cffi]>=2025.11.12,<2028",
 ]
 
 [dependency-groups]

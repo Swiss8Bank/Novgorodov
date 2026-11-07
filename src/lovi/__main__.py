@@ -44,8 +44,16 @@ def main() -> None:
         )
     elif command == "health":
         sys.exit(0 if asyncio.run(health(gateway="gateway" in sys.argv[2:])) else 1)
+    elif command == "diagnose":
+        from lovi.diagnostics import diagnose, print_report
+
+        if len(sys.argv) != 3:
+            raise SystemExit("Использование: python -m lovi diagnose URL")
+        report = asyncio.run(diagnose(get_settings(), sys.argv[2]))
+        print_report(report)
+        sys.exit(0 if report["ok"] else 1)
     else:
-        raise SystemExit("Использование: python -m lovi [bot|worker|health]")
+        raise SystemExit("Использование: python -m lovi [bot|worker|health|diagnose URL]")
 
 
 if __name__ == "__main__":

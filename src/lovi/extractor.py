@@ -21,9 +21,79 @@ def resolution_of(fmt: dict) -> int:
 
 
 class MediaError(Exception):
-    def __init__(self, code: str):
+    def __init__(self, code: str, reason: str = "unspecified"):
         super().__init__(code)
         self.code = code
+        # Only fixed labels cross the subprocess boundary or enter logs.
+        self.reason = reason if reason in REASONS else "unspecified"
+
+
+REASONS = {
+    "unspecified",
+    "login_required",
+    "rate_limit_or_login",
+    "http_429",
+    "http_403",
+    "proxy_407",
+    "network_timeout",
+    "connection_failed",
+    "tls_error",
+    "empty_media_response",
+    "extractor_error",
+    "missing_impersonation",
+}
+
+
+def classify_error(exc: Exception) -> MediaError:
+    raw = str(exc).lower()
+    if any(word in raw for word in ("file is larger", "max-filesize", "too large")):
+        return MediaError("too_large")
+    if "requested format" in raw or "no video in this post" in raw:
+        return MediaError("format")
+    if "407" in raw or "proxy authentication" in raw:
+        return MediaError("proxy_auth", "proxy_407")
+    if "certificate verify failed" in raw or "certificate_verify_failed" in raw:
+        return MediaError("network", "tls_error")
+    if "timed out" in raw or "timeout" in raw:
+        return MediaError("timeout", "network_timeout")
+    if "429" in raw:
+        return MediaError("rate_limit", "http_429")
+    rate = any(word in raw for word in ("rate-limit", "rate limit", "too many requests"))
+    login = any(
+        word in raw
+        for word in (
+            "login required",
+            "log in",
+            "logged-in",
+            "login page",
+            "sign in",
+            "registered users",
+        )
+    )
+    if rate and login:
+        return MediaError("site_access", "rate_limit_or_login")
+    if rate:
+        return MediaError("rate_limit", "http_429")
+    # An empty response with a generic login hint does not prove cookies are required.
+    if "empty media response" in raw:
+        return MediaError("site_access", "empty_media_response")
+    if login:
+        return MediaError("login", "login_required")
+    if "403" in raw:
+        return MediaError("site_access", "http_403")
+    if "impersonat" in raw and any(word in raw for word in ("not available", "not found")):
+        return MediaError("internal", "missing_impersonation")
+    if any(
+        word in raw
+        for word in (
+            "connection refused",
+            "unable to connect",
+            "name resolution",
+            "proxy connection",
+        )
+    ):
+        return MediaError("network", "connection_failed")
+    return MediaError("unavailable", "extractor_error")
 
 
 class QuietLogger:
@@ -304,14 +374,10 @@ def main() -> None:
     try:
         result = {"ok": True, "data": extract(request, directory)}
     except MediaError as exc:
-        result = {"ok": False, "code": exc.code}
+        result = {"ok": False, "code": exc.code, "reason": exc.reason}
     except DownloadError as exc:
-        # Map known errors without logging URLs, cookie data or proxy credentials.
-        raw = str(exc).lower()
-        code = "format" if "requested format" in raw else "unavailable"
-        if any(word in raw for word in ("file is larger", "max-filesize", "too large")):
-            code = "too_large"
-        result = {"ok": False, "code": code}
+        error = classify_error(exc)
+        result = {"ok": False, "code": error.code, "reason": error.reason}
     except Exception:
         result = {"ok": False, "code": "internal"}
     (directory / "result.json").write_text(json.dumps(result))

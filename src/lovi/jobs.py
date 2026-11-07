@@ -56,6 +56,8 @@ async def inspect_media(
         outcome = "blocked"
     except Exception as exc:
         outcome = exc.code if isinstance(exc, MediaError) else "internal"
+        if isinstance(exc, MediaError):
+            logger.warning("probe job=%s reason=%s", request_id, exc.reason)
         await report_failure(bot, chat_id, message_id, outcome)
     finally:
         await store.release(user_id, request_id)
@@ -188,6 +190,8 @@ async def deliver_media(
         outcome = "blocked"
     except Exception as exc:
         outcome = exc.code if isinstance(exc, MediaError) else "internal"
+        if isinstance(exc, MediaError):
+            logger.warning("delivery job=%s reason=%s", request_id, exc.reason)
         if isinstance(exc, TelegramBadRequest) and "too large" in exc.message.lower():
             outcome = "too_large"
         await report_failure(bot, chat_id, message_id, outcome)

@@ -98,7 +98,7 @@ class Downloader:
             raise MediaError("internal")
         result = json.loads(result_path.read_text())
         if not result.get("ok"):
-            raise MediaError(result.get("code", "internal"))
+            raise MediaError(result.get("code", "internal"), result.get("reason", "unspecified"))
         return result["data"]
 
     async def probe(self, url: str, directory: Path) -> MediaInfo:
