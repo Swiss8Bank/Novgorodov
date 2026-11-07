@@ -19,13 +19,20 @@ async def diagnose(settings: Settings, url: str) -> dict:
         "curl_cffi_installed": find_spec("curl_cffi") is not None,
         "media_proxy_configured": bool(settings.media_proxy),
         "cookies_configured": bool(settings.cookies_file),
+        "max_duration_seconds": settings.max_duration_seconds,
     }
     try:
         url = normalize_url(url)
         settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         with tempfile.TemporaryDirectory(dir=settings.data_dir, prefix="probe-") as work:
             info = await Downloader(settings).probe(url, Path(work))
-        report.update(ok=True, platform=info.platform, duration=info.duration, heights=info.heights)
+        report.update(
+            ok=True,
+            platform=info.platform,
+            duration=info.duration,
+            duration_known=info.duration > 0,
+            heights=info.heights,
+        )
     except InvalidLink:
         report.update(ok=False, code="invalid_link", reason="unsupported_url")
     except MediaError as exc:

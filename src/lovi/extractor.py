@@ -1,6 +1,7 @@
 """Isolated yt-dlp entry point. No tokens, URLs or upstream errors go to logs."""
 
 import json
+import math
 import resource
 import subprocess
 import sys
@@ -41,6 +42,8 @@ REASONS = {
     "empty_media_response",
     "extractor_error",
     "missing_impersonation",
+    "duration_limit",
+    "file_duration_missing",
 }
 
 
@@ -110,15 +113,24 @@ class QuietLogger:
         pass
 
 
+def known_duration(value) -> float | None:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if math.isfinite(seconds) and seconds > 0 else None
+
+
 def check_info(info: dict, max_duration: int) -> None:
     if info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming", "post_live"}:
         raise MediaError("live")
     if info.get("_type") in {"playlist", "multi_video"} or "entries" in info:
         raise MediaError("unavailable")
-    # Unknown length streams are not allowed to consume unbounded bandwidth.
-    duration = info.get("duration")
-    if not duration or duration > max_duration:
-        raise MediaError("duration")
+    # Missing website metadata is common on Reels. Bound downloads by bytes/time,
+    # then independently verify the file duration with ffprobe before delivery.
+    duration = known_duration(info.get("duration"))
+    if duration is not None and duration > max_duration:
+        raise MediaError("duration", "duration_limit")
     extractor = str(info.get("extractor_key", "")).lower()
     if extractor not in {"youtube", "tiktok", "instagram"}:
         raise MediaError("unavailable")
@@ -150,7 +162,7 @@ def summarize(info: dict, url: str) -> MediaInfo:
         title=info.get("title") or "Ролик",
         author=info.get("uploader") or "",
         platform={"youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram"}[key],
-        duration=int(info.get("duration") or 0),
+        duration=math.ceil(known_duration(info.get("duration")) or 0),
         heights=heights,
         has_audio=any(
             f.get("acodec") != "none" and f.get("ext") in {"mp4", "m4a", "webm"} for f in formats
@@ -253,6 +265,34 @@ def options(request: dict, directory: Path) -> dict:
     return opts
 
 
+def inspect_media_file(path: Path, max_duration: int) -> tuple[float, dict]:
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration:stream=codec_type,codec_name,width,height,duration",
+            "-of",
+            "json",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    data = json.loads(probe.stdout)
+    streams = data.get("streams", [])
+    durations = [known_duration(data.get("format", {}).get("duration"))]
+    durations += [known_duration(stream.get("duration")) for stream in streams]
+    actual = max((value for value in durations if value is not None), default=None)
+    if actual is None:
+        raise MediaError("duration_unknown", "file_duration_missing")
+    if actual > max_duration:
+        raise MediaError("duration", "duration_limit")
+    video = next((stream for stream in streams if stream.get("codec_type") == "video"), {})
+    return actual, video
+
+
 def extract(request: dict, directory: Path) -> dict:
     url = normalize_url(request["url"])
     opts = options(request, directory)
@@ -335,24 +375,13 @@ def extract(request: dict, directory: Path) -> dict:
             stderr=subprocess.DEVNULL,
         )
         path = ready
-        probe = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=width,height,codec_name",
-                "-of",
-                "json",
-                str(path),
-            ],
-            check=True,
-            capture_output=True,
-        )
-        stream = json.loads(probe.stdout)["streams"][0]
-        width, height, codec = stream["width"], stream["height"], stream["codec_name"]
+    actual_duration = known_duration(info.get("duration")) or 0
+    if selection.kind in {"video", "audio"}:
+        actual_duration, stream = inspect_media_file(path, request["max_duration"])
+        if selection.kind == "video":
+            if not stream:
+                raise MediaError("format")
+            width, height, codec = stream["width"], stream["height"], stream["codec_name"]
     if path.stat().st_size > request["max_bytes"]:
         raise MediaError("too_large")
     return Artifact(
@@ -361,7 +390,7 @@ def extract(request: dict, directory: Path) -> dict:
         width=width,
         height=height,
         video_codec=codec,
-        duration=int(info.get("duration") or 0),
+        duration=math.ceil(actual_duration),
     ).model_dump()
 
 

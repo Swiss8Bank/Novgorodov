@@ -85,7 +85,7 @@ async def send_media(
             audio=media,
             title=info.title[:180],
             performer=info.author[:100] or "ЛОВИ",
-            duration=info.duration,
+            duration=artifact.duration if artifact else None,
             **common,
         )
         return CachedFile(kind="audio", file_id=message.audio.file_id)
@@ -96,7 +96,7 @@ async def send_media(
     message = await bot.send_video(
         video=media,
         supports_streaming=True,
-        duration=info.duration,
+        duration=artifact.duration if artifact else None,
         width=artifact.width if artifact else None,
         height=artifact.height if artifact else None,
         **common,

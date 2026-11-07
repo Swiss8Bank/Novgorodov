@@ -43,7 +43,7 @@ async def test_delivery_cache_and_temp_cleanup(
     async def download(url, selection, directory):
         path = directory / f"media{suffix}"
         path.write_bytes(b"media-fixture")
-        return Artifact(path=str(path), kind=selection.kind)
+        return Artifact(path=str(path), kind=selection.kind, duration=3)
 
     downloader = SimpleNamespace(download=AsyncMock(side_effect=download))
     ctx = context(store, fake_bot, settings, downloader)
@@ -56,6 +56,11 @@ async def test_delivery_cache_and_temp_cleanup(
     assert sender.await_count == 2
     field = {"v720": "video", "audio": "audio", "cover": "document"}[key]
     assert isinstance(sender.call_args.kwargs[field], str)
+    if key != "cover":
+        assert sender.await_args_list[0].kwargs["duration"] == 3
+        # The cached file already has duration in Telegram; don't overwrite it
+        # with possibly inaccurate website metadata.
+        assert sender.await_args_list[1].kwargs["duration"] is None
     assert not list(settings.data_dir.iterdir())
 
 

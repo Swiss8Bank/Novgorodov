@@ -10,8 +10,8 @@ from yt_dlp import YoutubeDL
 from lovi import extractor
 
 
-@pytest.fixture
-def local_media(tmp_path, monkeypatch):
+@pytest.fixture(params=[1, None], ids=["known-duration", "missing-duration"])
+def local_media(tmp_path, monkeypatch, request):
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         pytest.skip("FFmpeg and ffprobe required for actual media pipeline tests")
     source = tmp_path / "source.mp4"
@@ -65,7 +65,7 @@ def local_media(tmp_path, monkeypatch):
         "title": "Fixture",
         "extractor_key": "Youtube",
         "extractor": "youtube",
-        "duration": 1,
+        "duration": request.param,
         "webpage_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         "thumbnails": [{"url": cover.as_uri(), "id": "cover", "ext": "jpg"}],
         "formats": [
@@ -136,8 +136,29 @@ def test_actual_ytdlp_ffmpeg_pipeline(local_media, kind, ext, codec):
     )
     codecs = {stream["codec_name"] for stream in json.loads(raw.stdout)["streams"]}
     assert codec in codecs
+    if kind != "cover":
+        assert result["duration"] > 0
     if kind == "video":
         assert "aac" in codecs
         data = path.read_bytes()
         assert data.index(b"moov") < data.index(b"mdat")
         assert (result["width"], result["height"]) == (320, 240)
+
+
+@pytest.mark.parametrize("kind", ["video", "audio"])
+def test_actual_file_still_cannot_exceed_duration_limit(local_media, kind):
+    with pytest.raises(extractor.MediaError) as caught:
+        extractor.extract(
+            {
+                "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "action": "download",
+                "selection": {"kind": kind, "height": 240 if kind == "video" else 0},
+                "max_bytes": 10_000_000,
+                "max_duration": 0.5,
+                "fragments": 2,
+                "js_runtime": "node",
+            },
+            local_media,
+        )
+    assert caught.value.code == "duration"
+    assert caught.value.reason == "duration_limit"

@@ -1,6 +1,9 @@
+import json
+from types import SimpleNamespace
+
 import pytest
 
-from lovi.extractor import MediaError, check_info, summarize, video_format
+from lovi.extractor import MediaError, check_info, inspect_media_file, summarize, video_format
 from lovi.models import MediaSession, Selection
 from lovi.ui import delivery_caption, media_card, media_keyboard
 
@@ -62,7 +65,6 @@ def test_no_audio_track_is_not_silently_dropped():
         ({"is_live": True}, "live"),
         ({"live_status": "is_upcoming"}, "live"),
         ({"duration": 1000}, "duration"),
-        ({"duration": None}, "duration"),
         ({"_type": "playlist"}, "unavailable"),
         ({"extractor_key": "Generic"}, "unavailable"),
     ],
@@ -71,6 +73,32 @@ def test_reject_unbounded_and_unsupported(extra, code):
     with pytest.raises(MediaError) as caught:
         check_info({"extractor_key": "Youtube", "duration": 10, **extra}, 60)
     assert caught.value.code == code
+
+
+@pytest.mark.parametrize("duration", [None, 0, "", -1, float("nan"), float("inf")])
+def test_unknown_duration_does_not_mean_too_long(duration):
+    data = {"extractor_key": "Instagram", "duration": duration}
+    check_info(data, 60)
+    assert summarize(data, "https://www.instagram.com/reel/example/").duration == 0
+
+
+def test_known_over_limit_has_distinct_reason():
+    with pytest.raises(MediaError) as caught:
+        check_info({"extractor_key": "Instagram", "duration": 61}, 60)
+    assert caught.value.reason == "duration_limit"
+
+
+def test_unmeasurable_file_is_not_delivered(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "lovi.extractor.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout=json.dumps({"format": {}, "streams": []}).encode()
+        ),
+    )
+    with pytest.raises(MediaError) as caught:
+        inspect_media_file(tmp_path / "file.mp4", 60)
+    assert caught.value.code == "duration_unknown"
+    assert caught.value.reason == "file_duration_missing"
 
 
 @pytest.mark.parametrize("key", ["v-1", "v9999", "v720:bad", "mp3", "../cover", "video"])
