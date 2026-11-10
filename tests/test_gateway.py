@@ -26,7 +26,8 @@ async def test_start_renders_menu(gateway_bot, store):
     dp.include_router(make_router())
     await dp.feed_update(gateway_bot, Update(update_id=1, message=message("/start")))
     response = gateway_bot.session.calls[-1]
-    assert "ЛОВИ" in response.text
+    assert response.__api_method__ == "sendAnimation"
+    assert "ЛОВИ" in response.caption
     assert response.reply_markup.inline_keyboard[0][0].callback_data == "help"
 
 

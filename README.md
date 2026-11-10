@@ -37,8 +37,9 @@ docker compose logs -f bot worker
 
 ## Как выглядит чат
 
-Приветствие `/start` поддерживает GIF в том же сообщении, что и текст с кнопками.
-Положите свой GIF в `assets/welcome.gif` перед сборкой Docker-образа.
+Приветствие `/start` отправляет включённый в проект пользовательский GIF
+`assets/welcome.gif` в том же сообщении, что и текст с кнопками.
+Для замены положите другой GIF в `assets/welcome.gif` перед сборкой Docker-образа.
 Для другого пути задайте `WELCOME_ANIMATION_PATH`; также поддерживается MP4
 без звука. После замены файла выполните `docker compose build bot`, затем
 `docker compose up -d --no-build --force-recreate bot`.
