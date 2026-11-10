@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     cookies_file: Path | None = None
     js_runtime: str = "node"
     telegram_api_base: str = ""
+    welcome_animation_path: Path = Path("assets/welcome.gif")
+    welcome_animation_file_id: str | None = None
     max_upload_mb: int = Field(49, ge=1, le=1900)
     max_duration_seconds: int = Field(1800, ge=1, le=14400)
     max_queue_size: int = Field(100, ge=1, le=10000)
@@ -44,7 +46,13 @@ class Settings(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def empty_optional(cls, values: dict) -> dict:
-        for name in ("telegram_proxy", "media_proxy", "cookies_file", "webhook_secret"):
+        for name in (
+            "telegram_proxy",
+            "media_proxy",
+            "cookies_file",
+            "webhook_secret",
+            "welcome_animation_file_id",
+        ):
             if values.get(name) == "":
                 values[name] = None
         return values

@@ -7,8 +7,9 @@ from aiogram.types import CallbackQuery, Message
 
 from lovi.models import Selection
 from lovi.store import Store
-from lovi.ui import HELP, WELCOME, home_keyboard
+from lovi.ui import HELP, home_keyboard
 from lovi.urls import InvalidLink, normalize_url
+from lovi.welcome import send_welcome
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,8 @@ def make_router() -> Router:
     router.message.filter(F.chat.type == "private")
 
     @router.message(CommandStart())
-    async def start(message: Message) -> None:
-        await message.answer(WELCOME, reply_markup=home_keyboard())
+    async def start(message: Message, store: Store) -> None:
+        await send_welcome(message, store)
 
     @router.message(Command("help"))
     async def help_message(message: Message) -> None:

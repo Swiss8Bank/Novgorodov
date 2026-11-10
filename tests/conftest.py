@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.types import Chat, Message, User
+from aiogram.types import Animation, Chat, Message, User
 from arq.connections import ArqRedis
 from fakeredis.aioredis import FakeRedis
 
@@ -81,6 +81,20 @@ class RecordingSession(BaseSession):
                 date=datetime.now(UTC),
                 chat=Chat(id=int(method.chat_id), type="private"),
                 text=method.text,
+            ).as_(bot)
+        if method.__api_method__ == "sendAnimation":
+            return Message(
+                message_id=len(self.calls),
+                date=datetime.now(UTC),
+                chat=Chat(id=int(method.chat_id), type="private"),
+                caption=method.caption,
+                animation=Animation(
+                    file_id="welcome-animation-id",
+                    file_unique_id="welcome-unique",
+                    width=720,
+                    height=406,
+                    duration=4,
+                ),
             ).as_(bot)
         return True
 

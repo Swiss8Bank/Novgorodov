@@ -37,6 +37,15 @@ docker compose logs -f bot worker
 
 ## Как выглядит чат
 
+Приветствие `/start` поддерживает GIF в том же сообщении, что и текст с кнопками.
+Положите свой GIF в `assets/welcome.gif` перед сборкой Docker-образа.
+Для другого пути задайте `WELCOME_ANIMATION_PATH`; также поддерживается MP4
+без звука. После замены файла выполните `docker compose build bot`, затем
+`docker compose up -d --no-build --force-recreate bot`.
+Повторные отправки используют Telegram `file_id`, сохранённый в Redis отдельно
+для каждого бота и содержимого файла. При отсутствии или отклонении анимации
+бот отправит обычное текстовое приветствие. См. [assets/README.md](assets/README.md).
+
 ```text
 ЛОВИ / медиа по ссылке
 

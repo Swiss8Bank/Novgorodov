@@ -23,5 +23,6 @@ RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then \
       SSL_CERT_FILE=/run/secrets/proxy_ca uv sync --locked --no-dev; \
     else uv sync --locked --no-dev; fi
+COPY --chown=app:app assets ./assets
 USER app
 CMD ["python", "-m", "lovi", "bot"]
